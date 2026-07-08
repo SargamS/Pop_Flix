@@ -418,21 +418,23 @@ if page == "Home":
     st.markdown("<div class='section-title'>Trending now</div>", unsafe_allow_html=True)
     genre_map = fetch_genre_map("movie")
     trending = fetch_trending("movie", 8)
-    fan_html = "<div class='fan'>"
+    fan_parts = ["<div class='fan'>"]
     for m in trending:
         poster_path = m.get("poster_path")
         bg = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else PLACEHOLDER
         genre_names = [genre_map.get(g) for g in m.get("genre_ids", []) if genre_map.get(g)]
         label = genre_names[0] if genre_names else (m.get("title") or m.get("name", ""))
         link = f"?action=view&id={m['id']}&type=movie&label={requests.utils.quote(m.get('title', ''))}"
-        fan_html += f"""
-            <div class="fan-item" style="background-image:url('{bg}');">
-                <a href="{link}">
-                    <div class="fan-overlay">{label}</div>
-                </a>
-            </div>
-        """
-    fan_html += "</div>"
+        # Built flush-left / on one line on purpose: Streamlit's markdown renderer treats
+        # any line that starts with 4+ spaces of indentation as a fenced code block, which
+        # was why the whole fan gallery was showing up as literal HTML text on the page.
+        fan_parts.append(
+            f"<div class=\"fan-item\" style=\"background-image:url('{bg}');\">"
+            f"<a href=\"{link}\"><div class=\"fan-overlay\">{label}</div></a>"
+            f"</div>"
+        )
+    fan_parts.append("</div>")
+    fan_html = "".join(fan_parts)
     st.markdown(fan_html, unsafe_allow_html=True)
     render_recommender("movie", prefill=st.session_state.pop("presearch", None))
 
