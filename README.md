@@ -10,6 +10,9 @@ Typo in the title? PopFlix guesses what you meant.
 [![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat&logo=streamlit&logoColor=white)](https://streamlit.io)
 [![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org)
 [![TMDB](https://img.shields.io/badge/Data-TMDB%20API-01b4e4?style=flat&logo=themoviedatabase&logoColor=white)](https://www.themoviedb.org/documentation/api)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-popflix01.streamlit.app-FF4B4B?style=flat&logo=streamlit&logoColor=white)](https://popflix01.streamlit.app/)
+
+### 🔗 [**Try it live → popflix01.streamlit.app**](https://popflix01.streamlit.app/)
 
 </div>
 
@@ -87,50 +90,6 @@ flowchart TD
     GRID -->|"renders HTML via st.markdown"| U
 ```
 
-### Request Lifecycle
-
-Streamlit has no persistent server-side objects between interactions — **the entire script re-runs top to bottom on every click**. PopFlix's architecture is built around that constraint:
-
-1. **Query params first.** Every rerun starts by checking `st.query_params` for an `action` (`add`, `remove`, `view`). These arrive from plain `<a href="?action=...">` links rendered inside HTML cards — a way to trigger backend state changes from static HTML without JavaScript. The handler mutates `st.session_state` and immediately calls `st.query_params.clear()` + `st.rerun()` so the action isn't replayed.
-2. **Sidebar renders next**, including nav buttons and the search box. Clicking a nav button updates `st.session_state.page` and triggers a rerun.
-3. **The router** (`if page == "Home": ...`) picks which page function to execute based on `st.session_state.page`.
-4. **Page functions call cached TMDB fetchers** (`fetch_trending`, `search_titles`, etc.) to get data, then build HTML strings and hand them to `st.markdown(..., unsafe_allow_html=True)` for rendering.
-5. **Any click inside that HTML** (a poster, a "+ List" button, a suggestion) is just another link back to step 1, or a native `st.button` that flips session state and reruns.
-
-### Page Routing Model
-
-There's no real router/URL scheme — `st.session_state.page` is a single string (`"Home"`, `"Movies"`, `"TV Shows"`, `"Latest"`, `"My List"`) that gates a big `if/elif` block at the bottom of `app.py`. Query params are repurposed as a secondary "action channel" (not page navigation) for add/remove/view — a `view` action does both: it sets `page` **and** stashes a `jump_id` so the destination page knows which title to auto-open.
-
-### Session State Model
-
-| Key | Type | Purpose |
-|---|---|---|
-| `page` | `str` | Which page function the router renders |
-| `watchlist` | `list[tuple[id, media_type]]` | The user's "My List", scoped to the current browser session |
-| `jump_id` / `jump_label` | `str` (transient) | Set by a `view` query-param action; consumed once by `render_recommender()` to auto-select a title, then popped |
-| `presearch` | `str` (transient) | Carries the sidebar search box's text into the Movies page as a pre-filled query |
-| `query_{media_type}` | `str` | Backing value for each search text input; also how "Did you mean" buttons rewrite the search box programmatically |
-
-⚠️ All of this lives in memory for the duration of one browser session — nothing is persisted to disk or a database (see [Known Limitations](#known-limitations)).
-
-### Caching Strategy
-
-TMDB calls that return **stable-ish, shareable-across-users data** are wrapped in `@st.cache_data`:
-
-- `fetch_genre_map`, `fetch_trending`, `fetch_now_playing`, `search_titles`, `fetch_title_pool`
-
-`fetch_metadata()` (single-title detail lookup) is deliberately **not** cached, since it's called with dynamic, one-off IDs during recommendation rendering and caching every possible ID would offer little benefit.
-
-### The "Did You Mean" Engine
-
-TMDB's search endpoint doesn't do fuzzy/typo correction — an empty result set is a dead end. PopFlix works around this itself:
-
-1. `fetch_title_pool()` pulls several pages of `popular` + `top_rated` titles per media type and caches them as a flat pool.
-2. `get_spelling_suggestions()` runs the user's (lowercased) query through Python's built-in `difflib.get_close_matches` against that pool.
-3. Matches render as `st.button` suggestions; clicking one overwrites `st.session_state["query_{media_type}"]` and reruns, feeding the corrected title straight back into `search_titles()`.
-
-This means suggestions are grounded in real TMDB titles, but limited to whatever's in the popular/top-rated pool — a misspelled obscure indie title may not get a match.
-
 ## Tech Stack
 
 - **[Streamlit](https://streamlit.io)** — UI framework and app runtime (no separate frontend/backend split)
@@ -164,6 +123,8 @@ imports & config
 ```
 
 ## Getting Started
+
+> 💡 Want to try it first without installing anything? **[Live demo → popflix01.streamlit.app](https://popflix01.streamlit.app/)**
 
 ### Prerequisites
 
