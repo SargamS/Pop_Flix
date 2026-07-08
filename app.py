@@ -1,6 +1,5 @@
 import requests
 import streamlit as st
-import base64
 import difflib
 
 # ==== Streamlit Page Config ====
@@ -8,13 +7,6 @@ st.set_page_config(page_title="PopFlix", layout="wide", initial_sidebar_state="e
 
 TMDB_API_KEY = "8265bd1679663a7ea12ac168da84d2e8"
 PLACEHOLDER = "https://via.placeholder.com/500x750?text=No+Image"
-
-# ==== Helpers ====
-def get_base64_img(path):
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
-
-logo_base64 = get_base64_img("logo.png")
 
 # ==== Session State ====
 if "page" not in st.session_state:
@@ -292,7 +284,6 @@ st.markdown(f"""
 with st.sidebar:
     st.markdown(f"""
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;">
-            <img src="data:image/png;base64,{logo_base64}" style="height:32px;"/>
             <span style="color:#e50914;font-weight:800;font-size:18px;">PopFlix</span>
         </div>
     """, unsafe_allow_html=True)
@@ -320,7 +311,6 @@ st.markdown(f"""
     <div class="topbar">
         <div style="width:120px;"></div>
         <div class="brand">
-            <img src="data:image/png;base64,{logo_base64}" style="height:44px;"/>
             <h1>PopFlix</h1>
         </div>
         <div class="profile">
