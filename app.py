@@ -1,6 +1,7 @@
 import requests
 import streamlit as st
 import base64
+import difflib
 
 # ==== Streamlit Page Config ====
 st.set_page_config(page_title="PopFlix", layout="wide", initial_sidebar_state="expanded")
@@ -116,6 +117,36 @@ def recommend(item_id, media_type="movie"):
             continue
     return results
 
+@st.cache_data(show_spinner=False)
+def fetch_title_pool(media_type="movie", pages=4):
+    """Pull a pool of real titles from TMDB (popular + top rated) to check
+    a misspelled query against, so we can offer 'Did you mean...' suggestions."""
+    pool = {}
+    for endpoint in ["popular", "top_rated"]:
+        for p in range(1, pages + 1):
+            try:
+                url = f"https://api.themoviedb.org/3/{media_type}/{endpoint}?api_key={TMDB_API_KEY}&language=en-US&page={p}"
+                data = requests.get(url, timeout=8).json()
+                for r in data.get("results", []):
+                    name = r.get("title") or r.get("name", "")
+                    if name:
+                        pool[r["id"]] = name
+            except Exception:
+                continue
+    return [{"id": i, "title": t} for i, t in pool.items()]
+
+def get_spelling_suggestions(query, media_type, n=5, cutoff=0.55):
+    """Fuzzy-match a misspelled query against the title pool and return
+    close candidates the user might have meant."""
+    pool = fetch_title_pool(media_type)
+    if not pool or not query:
+        return []
+    by_lower = {}
+    for item in pool:
+        by_lower.setdefault(item["title"].lower(), item)
+    close = difflib.get_close_matches(query.lower(), by_lower.keys(), n=n, cutoff=cutoff)
+    return [by_lower[c] for c in close]
+
 # ==== Global CSS: Netflix-dark theme ====
 st.markdown(f"""
 <style>
@@ -163,7 +194,7 @@ st.markdown(f"""
     }}
     .brand h1 {{
         color: #e50914;
-        font-size: 34px;
+        font-size: 56px;
         letter-spacing: 2px;
         margin: 0;
     }}
@@ -316,6 +347,16 @@ def render_recommender(media_type, prefill=None):
             matches = search_titles(query, media_type)
         if not matches:
             st.warning(f"No {label} found matching \"{query}\".")
+            with st.spinner("Checking for similar titles..."):
+                suggestions = get_spelling_suggestions(query, media_type)
+            if suggestions:
+                st.markdown("Did you mean:")
+                s_cols = st.columns(len(suggestions))
+                for i, s in enumerate(suggestions):
+                    with s_cols[i]:
+                        if st.button(s["title"], key=f"suggest_{media_type}_{s['id']}", use_container_width=True):
+                            st.session_state[f"query_{media_type}"] = s["title"]
+                            st.rerun()
         elif len(matches) == 1:
             selected_id, selected_label = matches[0]["id"], matches[0]["label"]
         else:
