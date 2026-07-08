@@ -209,15 +209,3 @@ setx TMDB_API_KEY "your_key_here"       # Windows
 ```
 
 Or, on Streamlit Community Cloud, add `TMDB_API_KEY` under your app's **Secrets**.
-
-## TMDB Endpoints Used
-
-| Endpoint | Used for |
-|---|---|
-| `/genre/{media_type}/list` | Genre ID → name lookup for card labels |
-| `/trending/{media_type}/day` | Home page "Trending now" fan gallery |
-| `/movie/now_playing` | "Latest" page grid |
-| `/search/{media_type}` | Title search |
-| `/{media_type}/{id}` | Full metadata for a selected/hero title |
-| `/{media_type}/{id}/recommendations`, `/{media_type}/{id}/similar` | "You may also like" row (falls back to `similar` if `recommendations` is empty) |
-| `/{media_type}/popular`, `/{media_type}/top_rated` | Title pool for spelling-suggestion matching |
