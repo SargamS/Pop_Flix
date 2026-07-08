@@ -13,30 +13,6 @@ Typo in the title? PopFlix guesses what you meant.
 
 </div>
 
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Features](#features)
-- [Architecture](#architecture)
-  - [High-Level Diagram](#high-level-diagram)
-  - [Request Lifecycle](#request-lifecycle)
-  - [Page Routing Model](#page-routing-model)
-  - [Session State Model](#session-state-model)
-  - [Caching Strategy](#caching-strategy)
-  - [The "Did You Mean" Engine](#the-did-you-mean-engine)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-- [Configuration](#configuration)
-- [TMDB Endpoints Used](#tmdb-endpoints-used)
-- [Known Limitations](#known-limitations)
-- [Roadmap](#roadmap)
-- [License](#license)
-
----
-
 ## Overview
 
 PopFlix is a single-file Streamlit application that turns the [TMDB API](https://www.themoviedb.org/documentation/api) into a Netflix-like browsing experience. It has no backend server, no database, and no build step — `streamlit run app.py` is the entire deployment story. All "backend" logic (routing, state, API calls, fuzzy search) lives inside one Python script and runs fresh on every interaction, which is the core mental model to understand before touching the code (see [Architecture](#architecture)).
@@ -245,24 +221,3 @@ Or, on Streamlit Community Cloud, add `TMDB_API_KEY` under your app's **Secrets*
 | `/{media_type}/{id}` | Full metadata for a selected/hero title |
 | `/{media_type}/{id}/recommendations`, `/{media_type}/{id}/similar` | "You may also like" row (falls back to `similar` if `recommendations` is empty) |
 | `/{media_type}/popular`, `/{media_type}/top_rated` | Title pool for spelling-suggestion matching |
-
-## Known Limitations
-
-- **API key is hardcoded** — must be moved to env vars/secrets before public deployment.
-- **No persistence** — the watchlist and all session state reset when the browser session ends; there's no database or file storage.
-- **Spelling suggestions are pool-limited** — only titles in `popular`/`top_rated` are matchable.
-- **No pagination** — search results are capped at 8, Now Playing at 12, with no "load more."
-- **Single-user session model** — nothing is shared between users; deploying for multiple concurrent users means multiple independent watchlists, not a shared one.
-
-## Roadmap
-
-- [ ] Move TMDB API key to environment variables / Streamlit secrets
-- [ ] Persist the watchlist (SQLite, file, or Streamlit's key-value storage) across sessions
-- [ ] Add pagination for search results and the Now Playing grid
-- [ ] Expand the spelling-suggestion pool with genre-based or trending titles
-- [ ] Add loading skeletons instead of blank gaps during `st.spinner` calls
-- [ ] Extract TMDB calls and UI builders into separate modules as the app grows
-
-## License
-
-Add your preferred license here (e.g. MIT).
