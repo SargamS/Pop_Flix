@@ -76,8 +76,32 @@ def fetch_now_playing(n=12):
     except Exception:
         return []
 
+@st.cache_data(show_spinner=False)
+def fetch_trailer_key(item_id, media_type="movie"):
+    """Return a YouTube video key for this title's trailer/teaser, or None.
+    Tries an English-tagged request first, then falls back to an
+    unfiltered request, since some regional-language titles only have
+    videos tagged in their original language on TMDB."""
+    for url in (
+        f"https://api.themoviedb.org/3/{media_type}/{item_id}/videos?api_key={TMDB_API_KEY}&language=en-US",
+        f"https://api.themoviedb.org/3/{media_type}/{item_id}/videos?api_key={TMDB_API_KEY}",
+    ):
+        try:
+            data = requests.get(url, timeout=8).json()
+            vids = data.get("results", [])
+            for want_type in ("Trailer", "Teaser"):
+                for v in vids:
+                    if v.get("site") == "YouTube" and v.get("type") == want_type:
+                        return v.get("key")
+            for v in vids:
+                if v.get("site") == "YouTube":
+                    return v.get("key")
+        except Exception:
+            continue
+    return None
+
 def fetch_metadata(item_id, media_type="movie"):
-    """Returns title, poster_url, rating, genres, trailer, overview, original_language, genre_ids."""
+    """Returns title, poster_url, rating, genres, trailer, overview, original_language, genre_ids, trailer_key."""
     try:
         url = f"https://api.themoviedb.org/3/{media_type}/{item_id}?api_key={TMDB_API_KEY}&language=en-US"
         data = requests.get(url, timeout=8).json()
@@ -88,12 +112,14 @@ def fetch_metadata(item_id, media_type="movie"):
         genres = ", ".join(g["name"] for g in genre_list)
         genre_ids = [g["id"] for g in genre_list]
         overview = data.get("overview", "")
-        trailer = f"https://www.youtube.com/results?search_query={'+'.join(title.split())}+trailer"
         poster_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else PLACEHOLDER
         original_language = data.get("original_language", "")
-        return title, poster_url, rating, genres, trailer, overview, original_language, genre_ids
+        trailer_key = fetch_trailer_key(item_id, media_type)
+        trailer = f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else \
+            f"https://www.youtube.com/results?search_query={'+'.join(title.split())}+trailer"
+        return title, poster_url, rating, genres, trailer, overview, original_language, genre_ids, trailer_key
     except Exception:
-        return "", PLACEHOLDER, "N/A", "", "#", "", "", []
+        return "", PLACEHOLDER, "N/A", "", "#", "", "", [], None
 
 @st.cache_data(show_spinner=False)
 def search_titles(query, media_type="movie"):
@@ -157,9 +183,10 @@ def recommend(item_id, media_type="movie", language_filter=None, genre_ids=None,
             for r in candidates:
                 if len(results) >= n or r["id"] in seen_ids:
                     continue
-                title, poster, rating, genres, trailer, _, language, _ = fetch_metadata(r["id"], media_type)
+                title, poster, rating, genres, trailer, _, language, _, trailer_key = fetch_metadata(r["id"], media_type)
                 results.append({"id": r["id"], "title": title, "poster": poster, "rating": rating,
-                                 "genres": genres, "trailer": trailer, "language": language})
+                                 "genres": genres, "trailer": trailer, "language": language,
+                                 "trailer_key": trailer_key})
                 seen_ids.add(r["id"])
             if len(results) >= n:
                 return results
@@ -175,9 +202,10 @@ def recommend(item_id, media_type="movie", language_filter=None, genre_ids=None,
         for c in discover_candidates:
             if len(results) >= n or c["id"] in seen_ids:
                 continue
-            title, poster, rating, genres, trailer, _, language, _ = fetch_metadata(c["id"], media_type)
+            title, poster, rating, genres, trailer, _, language, _, trailer_key = fetch_metadata(c["id"], media_type)
             results.append({"id": c["id"], "title": title, "poster": poster, "rating": rating,
-                             "genres": genres, "trailer": trailer, "language": language})
+                             "genres": genres, "trailer": trailer, "language": language,
+                             "trailer_key": trailer_key})
             seen_ids.add(c["id"])
 
     return results
@@ -328,6 +356,40 @@ st.markdown(f"""
         border-color: #e50914;
     }}
     .movie-poster {{ width: 100%; border-radius: 8px; }}
+
+    /* ---- Hover-to-play trailer preview ---- */
+    .poster-wrap {{
+        position: relative;
+        width: 100%;
+        aspect-ratio: 2 / 3;
+        border-radius: 8px;
+        overflow: hidden;
+    }}
+    .poster-wrap .movie-poster {{
+        position: absolute; top: 0; left: 0;
+        width: 100%; height: 100%;
+        object-fit: cover;
+        transition: opacity 0.3s ease;
+    }}
+    .poster-wrap .trailer-frame {{
+        position: absolute; top: 0; left: 0;
+        width: 100%; height: 100%;
+        border: 0;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s ease 0.35s; /* short delay so a quick mouse pass doesn't trigger it */
+    }}
+    .movie-card:hover .trailer-frame {{ opacity: 1; }}
+    .movie-card:hover .poster-wrap .movie-poster {{ opacity: 0; }}
+    .fan-item .trailer-frame {{
+        position: absolute; top: 0; left: 0;
+        width: 100%; height: 100%;
+        border: 0;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s ease 0.35s;
+    }}
+    .fan-item:hover .trailer-frame {{ opacity: 1; }}
     .movie-title {{ font-size: 16px; font-weight: 700; margin-top: 10px; min-height: 42px; }}
     .movie-subtext {{ font-size: 13px; margin-top: 4px; color: #b3b3b3; }}
     .btn-row {{ display: flex; gap: 6px; justify-content: center; margin-top: 10px; flex-wrap: wrap; }}
@@ -395,6 +457,22 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
+# ==== Poster block with Netflix-style hover-to-play trailer preview ====
+def poster_with_preview(poster_url, trailer_key, alt_class="movie-poster"):
+    """Wraps a poster image so that hovering over it fades in an autoplaying,
+    muted YouTube embed of the trailer, and fades the poster out. Falls back
+    to a plain poster if no trailer key is available."""
+    preview_html = ""
+    if trailer_key:
+        preview_html = (
+            f'<iframe class="trailer-frame" '
+            f'src="https://www.youtube.com/embed/{trailer_key}?autoplay=1&mute=1&controls=0'
+            f'&modestbranding=1&loop=1&playlist={trailer_key}&rel=0&showinfo=0&playsinline=1" '
+            f'frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>'
+        )
+    return f'<div class="poster-wrap"><img src="{poster_url}" class="{alt_class}" />{preview_html}</div>'
+
+
 # ==== Reusable render for a search+recommend flow ====
 def render_recommender(media_type, prefill=None):
     label = "movie" if media_type == "movie" else "TV show"
@@ -433,7 +511,7 @@ def render_recommender(media_type, prefill=None):
         selected_label = st.session_state.pop("jump_label", "")
 
     if selected_id:
-        title, poster, rating, genres, trailer, overview, orig_language, orig_genre_ids = fetch_metadata(selected_id, media_type)
+        title, poster, rating, genres, trailer, overview, orig_language, orig_genre_ids, orig_trailer_key = fetch_metadata(selected_id, media_type)
         display_title = selected_label or title
         in_list = (str(selected_id), media_type) in st.session_state.watchlist
         list_link = f"?action=remove&id={selected_id}&type={media_type}" if in_list else f"?action=add&id={selected_id}&type={media_type}"
@@ -470,10 +548,11 @@ def render_recommender(media_type, prefill=None):
                     r_link = f"?action=remove&id={r['id']}&type={media_type}" if in_r_list else f"?action=add&id={r['id']}&type={media_type}"
                     r_text = "✓ Added" if in_r_list else "+ List"
                     view_link = f"?action=view&id={r['id']}&type={media_type}&label={requests.utils.quote(r['title'])}"
+                    poster_block = poster_with_preview(r["poster"], r.get("trailer_key"))
                     st.markdown(f"""
                         <div class="movie-card">
                             <a href="{view_link}" style="text-decoration:none;color:inherit;">
-                                <img src="{r['poster']}" class="movie-poster" />
+                                {poster_block}
                                 <div class="movie-title">{r['title']}</div>
                             </a>
                             <div class="movie-subtext">⭐ {r['rating']}</div>
@@ -503,10 +582,12 @@ def render_grid(items, media_type):
         r_text = "✓ Added" if in_list else "+ List"
         view_link = f"?action=view&id={item_id}&type={media_type}&label={requests.utils.quote(title)}"
         with cols[i % 4]:
+            trailer_key = fetch_trailer_key(item_id, media_type)
+            poster_block = poster_with_preview(poster, trailer_key)
             st.markdown(f"""
                 <div class="movie-card">
                     <a href="{view_link}" style="text-decoration:none;color:inherit;">
-                        <img src="{poster}" class="movie-poster" />
+                        {poster_block}
                         <div class="movie-title">{title}</div>
                     </a>
                     <div class="movie-subtext">⭐ {rating}</div>
@@ -533,11 +614,21 @@ if page == "Home":
         genre_names = [genre_map.get(g) for g in m.get("genre_ids", []) if genre_map.get(g)]
         label = genre_names[0] if genre_names else (m.get("title") or m.get("name", ""))
         link = f"?action=view&id={m['id']}&type=movie&label={requests.utils.quote(m.get('title', ''))}"
+        trailer_key = fetch_trailer_key(m["id"], "movie")
+        trailer_html = ""
+        if trailer_key:
+            trailer_html = (
+                f'<iframe class="trailer-frame" '
+                f'src="https://www.youtube.com/embed/{trailer_key}?autoplay=1&mute=1&controls=0'
+                f'&modestbranding=1&loop=1&playlist={trailer_key}&rel=0&showinfo=0&playsinline=1" '
+                f'frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>'
+            )
         # Built flush-left / on one line on purpose: Streamlit's markdown renderer treats
         # any line that starts with 4+ spaces of indentation as a fenced code block, which
         # was why the whole fan gallery was showing up as literal HTML text on the page.
         fan_parts.append(
             f"<div class=\"fan-item\" style=\"background-image:url('{bg}');\">"
+            f"{trailer_html}"
             f"<a href=\"{link}\"><div class=\"fan-overlay\">{label}</div></a>"
             f"</div>"
         )
@@ -567,14 +658,15 @@ elif page == "My List":
     else:
         cols = st.columns(4)
         for i, (mid, mtype) in enumerate(st.session_state.watchlist):
-            title, poster, rating, genres, trailer, _, mlanguage, _ = fetch_metadata(mid, mtype)
+            title, poster, rating, genres, trailer, _, mlanguage, _, trailer_key = fetch_metadata(mid, mtype)
             r_link = f"?action=remove&id={mid}&type={mtype}"
             view_link = f"?action=view&id={mid}&type={mtype}&label={requests.utils.quote(title)}"
             with cols[i % 4]:
+                poster_block = poster_with_preview(poster, trailer_key)
                 st.markdown(f"""
                     <div class="movie-card">
                         <a href="{view_link}" style="text-decoration:none;color:inherit;">
-                            <img src="{poster}" class="movie-poster" />
+                            {poster_block}
                             <div class="movie-title">{title}</div>
                         </a>
                         <div class="movie-subtext">⭐ {rating}</div>
