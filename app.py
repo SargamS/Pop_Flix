@@ -77,21 +77,23 @@ def fetch_now_playing(n=12):
         return []
 
 def fetch_metadata(item_id, media_type="movie"):
-    """Returns title, poster_url, rating, genres, trailer, overview, original_language."""
+    """Returns title, poster_url, rating, genres, trailer, overview, original_language, genre_ids."""
     try:
         url = f"https://api.themoviedb.org/3/{media_type}/{item_id}?api_key={TMDB_API_KEY}&language=en-US"
         data = requests.get(url, timeout=8).json()
         title = data.get("title") or data.get("name", "")
         poster = data.get("poster_path")
         rating = data.get("vote_average", "N/A")
-        genres = ", ".join(g["name"] for g in data.get("genres", []))
+        genre_list = data.get("genres", [])
+        genres = ", ".join(g["name"] for g in genre_list)
+        genre_ids = [g["id"] for g in genre_list]
         overview = data.get("overview", "")
         trailer = f"https://www.youtube.com/results?search_query={'+'.join(title.split())}+trailer"
         poster_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else PLACEHOLDER
         original_language = data.get("original_language", "")
-        return title, poster_url, rating, genres, trailer, overview, original_language
+        return title, poster_url, rating, genres, trailer, overview, original_language, genre_ids
     except Exception:
-        return "", PLACEHOLDER, "N/A", "", "#", "", ""
+        return "", PLACEHOLDER, "N/A", "", "#", "", "", []
 
 @st.cache_data(show_spinner=False)
 def search_titles(query, media_type="movie"):
@@ -108,11 +110,41 @@ def search_titles(query, media_type="movie"):
     except Exception:
         return []
 
-def recommend(item_id, media_type="movie", language_filter=None):
+def discover_by_language(media_type, language, exclude_ids=None, genre_ids=None, n=5):
+    """Query TMDB's discover endpoint directly for titles in a given original
+    language. Used as a fallback for niche-language films (e.g. Urdu, Punjabi)
+    whose /similar and /recommendations lists are too sparse or empty, so we
+    don't end up silently showing English suggestions instead."""
+    exclude_ids = exclude_ids or set()
+    try:
+        url = (f"https://api.themoviedb.org/3/discover/{media_type}"
+               f"?api_key={TMDB_API_KEY}&language=en-US&sort_by=popularity.desc"
+               f"&with_original_language={language}")
+        if genre_ids:
+            url += f"&with_genres={','.join(str(g) for g in genre_ids)}"
+        data = requests.get(url, timeout=8).json()
+        candidates = [c for c in data.get("results", []) if c["id"] not in exclude_ids]
+        if not candidates and genre_ids:
+            # Genre constraint was too narrow (common for smaller film industries) -
+            # retry without it rather than giving up on the language match.
+            url = (f"https://api.themoviedb.org/3/discover/{media_type}"
+                   f"?api_key={TMDB_API_KEY}&language=en-US&sort_by=popularity.desc"
+                   f"&with_original_language={language}")
+            data = requests.get(url, timeout=8).json()
+            candidates = [c for c in data.get("results", []) if c["id"] not in exclude_ids]
+        return candidates[:n]
+    except Exception:
+        return []
+
+def recommend(item_id, media_type="movie", language_filter=None, genre_ids=None, n=5):
     """Fetch recommendations/similar titles, preferring results that match
     language_filter (the original_language of the source title) so a Hindi
-    film doesn't come back with only English suggestions."""
+    or Urdu film doesn't come back with only English suggestions. Falls back
+    to a direct language-filtered discover search when the similar/recommendations
+    endpoints don't have enough (or any) same-language titles."""
     results = []
+    seen_ids = {item_id}
+
     for endpoint in ["recommendations", "similar"]:
         try:
             url = f"https://api.themoviedb.org/3/{media_type}/{item_id}/{endpoint}?api_key={TMDB_API_KEY}&language=en-US"
@@ -120,20 +152,34 @@ def recommend(item_id, media_type="movie", language_filter=None):
             candidates = data.get("results", [])
 
             if language_filter:
-                same_lang = [c for c in candidates if c.get("original_language") == language_filter]
-                # Only fall back to the unfiltered list if filtering leaves us with nothing,
-                # so we never silently mix languages when good same-language matches exist.
-                candidates = same_lang if same_lang else candidates
+                candidates = [c for c in candidates if c.get("original_language") == language_filter]
 
-            if candidates:
-                for r in candidates[:5]:
-                    title, poster, rating, genres, trailer, _, language = fetch_metadata(r["id"], media_type)
-                    results.append({"id": r["id"], "title": title, "poster": poster, "rating": rating,
-                                     "genres": genres, "trailer": trailer, "language": language})
-                if results:
-                    break
+            for r in candidates:
+                if len(results) >= n or r["id"] in seen_ids:
+                    continue
+                title, poster, rating, genres, trailer, _, language, _ = fetch_metadata(r["id"], media_type)
+                results.append({"id": r["id"], "title": title, "poster": poster, "rating": rating,
+                                 "genres": genres, "trailer": trailer, "language": language})
+                seen_ids.add(r["id"])
+            if len(results) >= n:
+                return results
         except Exception:
             continue
+
+    # Not enough same-language matches from similar/recommendations - top up
+    # with a direct discover search filtered to the source title's language.
+    if language_filter and len(results) < n:
+        discover_candidates = discover_by_language(
+            media_type, language_filter, exclude_ids=seen_ids, genre_ids=genre_ids, n=n - len(results)
+        )
+        for c in discover_candidates:
+            if len(results) >= n or c["id"] in seen_ids:
+                continue
+            title, poster, rating, genres, trailer, _, language, _ = fetch_metadata(c["id"], media_type)
+            results.append({"id": c["id"], "title": title, "poster": poster, "rating": rating,
+                             "genres": genres, "trailer": trailer, "language": language})
+            seen_ids.add(c["id"])
+
     return results
 
 @st.cache_data(show_spinner=False)
@@ -387,7 +433,7 @@ def render_recommender(media_type, prefill=None):
         selected_label = st.session_state.pop("jump_label", "")
 
     if selected_id:
-        title, poster, rating, genres, trailer, overview, orig_language = fetch_metadata(selected_id, media_type)
+        title, poster, rating, genres, trailer, overview, orig_language, orig_genre_ids = fetch_metadata(selected_id, media_type)
         display_title = selected_label or title
         in_list = (str(selected_id), media_type) in st.session_state.watchlist
         list_link = f"?action=remove&id={selected_id}&type={media_type}" if in_list else f"?action=add&id={selected_id}&type={media_type}"
@@ -411,7 +457,7 @@ def render_recommender(media_type, prefill=None):
         """, unsafe_allow_html=True)
 
         with st.spinner("Finding similar titles..."):
-            results = recommend(selected_id, media_type, language_filter=orig_language)
+            results = recommend(selected_id, media_type, language_filter=orig_language, genre_ids=orig_genre_ids)
 
         st.markdown("<div class='section-title'>You may also like</div>", unsafe_allow_html=True)
         if not results:
@@ -521,7 +567,7 @@ elif page == "My List":
     else:
         cols = st.columns(4)
         for i, (mid, mtype) in enumerate(st.session_state.watchlist):
-            title, poster, rating, genres, trailer, _, mlanguage = fetch_metadata(mid, mtype)
+            title, poster, rating, genres, trailer, _, mlanguage, _ = fetch_metadata(mid, mtype)
             r_link = f"?action=remove&id={mid}&type={mtype}"
             view_link = f"?action=view&id={mid}&type={mtype}&label={requests.utils.quote(title)}"
             with cols[i % 4]:
