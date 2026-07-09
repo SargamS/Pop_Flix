@@ -8,6 +8,21 @@ st.set_page_config(page_title="PopFlix", layout="wide", initial_sidebar_state="e
 TMDB_API_KEY = "8265bd1679663a7ea12ac168da84d2e8"
 PLACEHOLDER = "https://via.placeholder.com/500x750?text=No+Image"
 
+# ==== Language code -> readable name ====
+LANGUAGE_NAMES = {
+    "en": "English", "hi": "Hindi", "ta": "Tamil", "te": "Telugu", "ml": "Malayalam",
+    "kn": "Kannada", "bn": "Bengali", "mr": "Marathi", "pa": "Punjabi", "gu": "Gujarati",
+    "ur": "Urdu", "ja": "Japanese", "ko": "Korean", "zh": "Chinese", "cn": "Chinese",
+    "fr": "French", "es": "Spanish", "de": "German", "it": "Italian", "ru": "Russian",
+    "pt": "Portuguese", "ar": "Arabic", "tr": "Turkish", "th": "Thai", "id": "Indonesian",
+    "vi": "Vietnamese", "fa": "Persian", "nl": "Dutch", "sv": "Swedish", "pl": "Polish",
+}
+
+def language_name(code):
+    if not code:
+        return "N/A"
+    return LANGUAGE_NAMES.get(code, code.upper())
+
 # ==== Session State ====
 if "page" not in st.session_state:
     st.session_state.page = "Home"
@@ -62,6 +77,7 @@ def fetch_now_playing(n=12):
         return []
 
 def fetch_metadata(item_id, media_type="movie"):
+    """Returns title, poster_url, rating, genres, trailer, overview, original_language."""
     try:
         url = f"https://api.themoviedb.org/3/{media_type}/{item_id}?api_key={TMDB_API_KEY}&language=en-US"
         data = requests.get(url, timeout=8).json()
@@ -72,9 +88,10 @@ def fetch_metadata(item_id, media_type="movie"):
         overview = data.get("overview", "")
         trailer = f"https://www.youtube.com/results?search_query={'+'.join(title.split())}+trailer"
         poster_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else PLACEHOLDER
-        return title, poster_url, rating, genres, trailer, overview
+        original_language = data.get("original_language", "")
+        return title, poster_url, rating, genres, trailer, overview, original_language
     except Exception:
-        return "", PLACEHOLDER, "N/A", "", "#", ""
+        return "", PLACEHOLDER, "N/A", "", "#", "", ""
 
 @st.cache_data(show_spinner=False)
 def search_titles(query, media_type="movie"):
@@ -91,18 +108,28 @@ def search_titles(query, media_type="movie"):
     except Exception:
         return []
 
-def recommend(item_id, media_type="movie"):
+def recommend(item_id, media_type="movie", language_filter=None):
+    """Fetch recommendations/similar titles, preferring results that match
+    language_filter (the original_language of the source title) so a Hindi
+    film doesn't come back with only English suggestions."""
     results = []
     for endpoint in ["recommendations", "similar"]:
         try:
             url = f"https://api.themoviedb.org/3/{media_type}/{item_id}/{endpoint}?api_key={TMDB_API_KEY}&language=en-US"
             data = requests.get(url, timeout=8).json()
             candidates = data.get("results", [])
+
+            if language_filter:
+                same_lang = [c for c in candidates if c.get("original_language") == language_filter]
+                # Only fall back to the unfiltered list if filtering leaves us with nothing,
+                # so we never silently mix languages when good same-language matches exist.
+                candidates = same_lang if same_lang else candidates
+
             if candidates:
                 for r in candidates[:5]:
-                    title, poster, rating, genres, trailer, _ = fetch_metadata(r["id"], media_type)
+                    title, poster, rating, genres, trailer, _, language = fetch_metadata(r["id"], media_type)
                     results.append({"id": r["id"], "title": title, "poster": poster, "rating": rating,
-                                     "genres": genres, "trailer": trailer})
+                                     "genres": genres, "trailer": trailer, "language": language})
                 if results:
                     break
         except Exception:
@@ -360,7 +387,7 @@ def render_recommender(media_type, prefill=None):
         selected_label = st.session_state.pop("jump_label", "")
 
     if selected_id:
-        title, poster, rating, genres, trailer, overview = fetch_metadata(selected_id, media_type)
+        title, poster, rating, genres, trailer, overview, orig_language = fetch_metadata(selected_id, media_type)
         display_title = selected_label or title
         in_list = (str(selected_id), media_type) in st.session_state.watchlist
         list_link = f"?action=remove&id={selected_id}&type={media_type}" if in_list else f"?action=add&id={selected_id}&type={media_type}"
@@ -372,6 +399,7 @@ def render_recommender(media_type, prefill=None):
                 <div>
                     <div class="hero-title">{display_title}</div>
                     <div class="hero-subtext">⭐ {rating}</div>
+                    <div class="hero-subtext">🌐 {language_name(orig_language)}</div>
                     <div class="hero-subtext">🎭 {genres}</div>
                     <div class="hero-subtext">{overview}</div>
                     <div class="btn-row" style="justify-content:flex-start;margin-top:16px;">
@@ -383,7 +411,7 @@ def render_recommender(media_type, prefill=None):
         """, unsafe_allow_html=True)
 
         with st.spinner("Finding similar titles..."):
-            results = recommend(selected_id, media_type)
+            results = recommend(selected_id, media_type, language_filter=orig_language)
 
         st.markdown("<div class='section-title'>You may also like</div>", unsafe_allow_html=True)
         if not results:
@@ -403,6 +431,7 @@ def render_recommender(media_type, prefill=None):
                                 <div class="movie-title">{r['title']}</div>
                             </a>
                             <div class="movie-subtext">⭐ {r['rating']}</div>
+                            <div class="movie-subtext">🌐 {language_name(r['language'])}</div>
                             <div class="movie-subtext">🎭 {r['genres']}</div>
                             <div class="btn-row">
                                 <a class="pill-btn" href="{r['trailer']}" target="_blank">▶ Trailer</a>
@@ -421,6 +450,7 @@ def render_grid(items, media_type):
         poster = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else PLACEHOLDER
         rating = item.get("vote_average", "N/A")
         genres = ", ".join(genre_map.get(g, "") for g in item.get("genre_ids", [])[:2] if g in genre_map)
+        item_language = item.get("original_language", "")
         item_id = item["id"]
         in_list = (str(item_id), media_type) in st.session_state.watchlist
         r_link = f"?action=remove&id={item_id}&type={media_type}" if in_list else f"?action=add&id={item_id}&type={media_type}"
@@ -434,6 +464,7 @@ def render_grid(items, media_type):
                         <div class="movie-title">{title}</div>
                     </a>
                     <div class="movie-subtext">⭐ {rating}</div>
+                    <div class="movie-subtext">🌐 {language_name(item_language)}</div>
                     <div class="movie-subtext">🎭 {genres}</div>
                     <div class="btn-row">
                         <a class="pill-btn secondary" href="{r_link}">{r_text}</a>
@@ -490,7 +521,7 @@ elif page == "My List":
     else:
         cols = st.columns(4)
         for i, (mid, mtype) in enumerate(st.session_state.watchlist):
-            title, poster, rating, genres, trailer, _ = fetch_metadata(mid, mtype)
+            title, poster, rating, genres, trailer, _, mlanguage = fetch_metadata(mid, mtype)
             r_link = f"?action=remove&id={mid}&type={mtype}"
             view_link = f"?action=view&id={mid}&type={mtype}&label={requests.utils.quote(title)}"
             with cols[i % 4]:
@@ -501,6 +532,7 @@ elif page == "My List":
                             <div class="movie-title">{title}</div>
                         </a>
                         <div class="movie-subtext">⭐ {rating}</div>
+                        <div class="movie-subtext">🌐 {language_name(mlanguage)}</div>
                         <div class="movie-subtext">🎭 {genres}</div>
                         <div class="btn-row">
                             <a class="pill-btn" href="{trailer}" target="_blank">▶ Trailer</a>
